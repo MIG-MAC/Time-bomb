@@ -143,37 +143,4 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
     );
   }
-
-  String _getStateText(SessionState state) {
-    switch (state) {
-      case SessionState.notConnected:
-        return 'Disponible';
-      case SessionState.connecting:
-        return 'Connexion...';
-      case SessionState.connected:
-        return 'Connecté';
-    }
-  }
-
-  Color _getStateColor(SessionState state) {
-    switch (state) {
-      case SessionState.notConnected:
-        return Colors.blue;
-      case SessionState.connecting:
-        return Colors.amber;
-      case SessionState.connected:
-        return Colors.green;
-    }
-  }
-
-  Widget? _buildTrailing(BuildContext context, Device device, GameNearbyService service) {
-    if (device.state == SessionState.notConnected) {
-      return ElevatedButton(
-        onPressed: () => service.connectToDevice(device),
-        style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
-        child: const Text('Connecter'),
-      );
-    }
-    return null;
-  }
 }

@@ -123,7 +123,7 @@ class GameNearbyService with ChangeNotifier {
       }
     });
 
-    FlutterBluePlus.startScan(allowDuplicates: true);
+    FlutterBluePlus.startScan();
   }
 
   void _processBroadcastName(String name, String deviceId) {
