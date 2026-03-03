@@ -84,16 +84,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
             const SizedBox(height: 30),
             Expanded(
               child: ListView.builder(
-                itemCount: nearbyService.discoveredDevices.length,
+                itemCount: nearbyService.connectedDevices.length,
                 itemBuilder: (context, index) {
-                  final device = nearbyService.discoveredDevices[index];
+                  final device = nearbyService.connectedDevices[index];
                   return Container(
                     margin: const EdgeInsets.only(bottom: 10),
                     decoration: BoxDecoration(
                       color: Colors.grey[900],
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
-                        color: _getStateColor(device.state),
+                        color: Colors.green,
                         width: 2,
                       ),
                     ),
@@ -103,10 +103,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         style: GoogleFonts.specialElite(color: Colors.white),
                       ),
                       subtitle: Text(
-                        _getStateText(device.state),
-                        style: TextStyle(color: _getStateColor(device.state)),
+                        "Prêt (Vu il y a ${DateTime.now().difference(device.lastSeen).inSeconds}s)",
+                        style: const TextStyle(color: Colors.green),
                       ),
-                      trailing: _buildTrailing(context, device, nearbyService),
                     ),
                   );
                 },

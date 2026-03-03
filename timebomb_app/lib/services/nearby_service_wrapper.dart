@@ -15,41 +15,38 @@ enum SessionState {
 class Device {
   final String deviceId;
   final String deviceName;
-  SessionState state;
-  final BluetoothDevice? bluetoothDevice;
+  final String lastMessage;
+  final DateTime lastSeen;
 
   Device({
     required this.deviceId,
     required this.deviceName,
-    this.state = SessionState.notConnected,
-    this.bluetoothDevice,
+    this.lastMessage = "",
+    required this.lastSeen,
   });
 }
 
 class GameNearbyService with ChangeNotifier {
   static const String SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-  static const String CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+  static const String APP_PREFIX = "TB"; // Time Bomb Prefix
 
-  List<Device> connectedDevices = [];
+  List<Device> connectedDevices = []; // En mode Broadcast, ce sont les joueurs détectés
   List<Device> discoveredDevices = [];
   
   bool isAdvertising = false;
-  bool isBrowsing = false;
+  bool isScanning = false;
   String? _myDeviceName;
+  String _currentPayload = "IDLE";
 
   final StreamController<String> _messageController = StreamController<String>.broadcast();
   Stream<String> get messages => _messageController.stream;
 
   StreamSubscription? _scanSubscription;
-  final Map<String, StreamSubscription> _notificationSubscriptions = {};
-  
-  // Periphérique (Hôte)
   final FlutterBlePeripheral _peripheral = FlutterBlePeripheral();
 
   GameNearbyService();
 
   Future<bool> requestPermissions() async {
-    debugPrint("Demande de permissions...");
     if (Platform.isAndroid) {
       Map<Permission, PermissionStatus> statuses = await [
         Permission.bluetoothScan,
@@ -57,241 +54,149 @@ class GameNearbyService with ChangeNotifier {
         Permission.bluetoothConnect,
         Permission.location,
       ].request();
-      debugPrint("Permissions Android: $statuses");
       return statuses.values.every((status) => status.isGranted);
-    } else {      
-      debugPrint("Sur iOS, les permissions Bluetooth sont gérées nativement par le système.");
-      return true;
     }
+    return true; // Géré nativement sur iOS
   }
 
   Future<void> init(String deviceName) async {
-    debugPrint("Initialisation du service pour: $deviceName");
     _myDeviceName = deviceName;
-    
-    debugPrint("Vérification de l'état de l'adaptateur Bluetooth...");
+    // On s'assure que le Bluetooth est prêt
     try {
-      // On ajoute un timeout pour éviter de rester bloqué si l'état ne change pas
-      var state = await FlutterBluePlus.adapterState.first.timeout(const Duration(seconds: 2));
-      debugPrint("État Bluetooth: $state");
-
-      if (state != BluetoothAdapterState.on) {
-        debugPrint("Le Bluetooth n'est pas activé ! État actuel: $state");
-        if (Platform.isAndroid) {
-          debugPrint("Tentative d'activation du Bluetooth (Android)...");
-          await FlutterBluePlus.turnOn();
-        }
-      }
-    } catch (e) {
-      debugPrint("Timeout ou erreur lors de la récupération de l'état Bluetooth: $e");
-      // On continue quand même, car l'état pourrait s'activer plus tard
-    }
+      await FlutterBluePlus.adapterState.first.timeout(const Duration(seconds: 2));
+    } catch (_) {}
   }
 
-  // --- LOGIQUE HÔTE (PERIPHERAL) ---
+  // --- LOGIQUE BROADCAST (ÉMISSION) ---
+
+  Future<void> _updateAdvertising() async {
+    if (!isAdvertising) return;
+
+    // Format du nom: TB:[Type]:[Nom]:[Payload]
+    // Note: Le nom local est limité en longueur sur iOS (~28 octets au total)
+    // On va faire court: TB:[H/C]:[Nom]:[Payload]
+    final type = isScanning ? "C" : "H"; // H=Hôte, C=Client
+    final shortName = _myDeviceName!.length > 8 ? _myDeviceName!.substring(0, 8) : _myDeviceName;
+    final advName = "${APP_PREFIX}_${type}_${shortName}_$_currentPayload";
+
+    debugPrint("Mise à jour Advertising: $advName");
+
+    final advertiseData = AdvertiseData(
+      serviceUuid: SERVICE_UUID,
+      localName: advName,
+    );
+
+    await _peripheral.stop();
+    await _peripheral.start(advertiseData: advertiseData);
+  }
 
   Future<void> startHosting() async {
-    debugPrint("Tentative de lancement de l'hébergement...");
-    if (isAdvertising) {
-      debugPrint("Déjà en train d'héberger.");
-      return;
-    }
-
-    try {
-      final advertiseData = AdvertiseData(
-        serviceUuid: SERVICE_UUID,
-        localName: _myDeviceName,
-      );
-
-      final advertiseSetParameters = AdvertiseSetParameters();
-
-      debugPrint("Démarrage du périphérique BLE peripheral...");
-      await _peripheral.start(
-        advertiseData: advertiseData,
-        advertiseSetParameters: advertiseSetParameters,
-      );
-      debugPrint("Périphérique BLE démarré avec succès.");
-
-      isAdvertising = true;
-      notifyListeners();
-    } catch (e) {
-      debugPrint("ERREUR lors du lancement de l'hébergement: $e");
-    }
-  }
-
-  void stopHosting() {
-    _peripheral.stop();
-    isAdvertising = false;
+    isAdvertising = true;
+    _currentPayload = "WAIT"; // L'hôte attend
+    await _updateAdvertising();
+    _startScanning(); // L'hôte doit aussi scanner pour voir les joueurs
     notifyListeners();
   }
 
-  // --- LOGIQUE CLIENT (CENTRAL) ---
+  Future<void> startJoining() async {
+    isAdvertising = true;
+    _currentPayload = "JOIN"; // Le client veut rejoindre
+    await _updateAdvertising();
+    _startScanning();
+    notifyListeners();
+  }
 
-  void startJoining() {
-    if (isBrowsing) return;
-    isBrowsing = true;
+  // --- LOGIQUE SCAN (RÉCEPTION) ---
+
+  void _startScanning() {
+    if (isScanning) return;
+    isScanning = true;
     discoveredDevices.clear();
-    
+    connectedDevices.clear();
+
     _scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
       for (ScanResult r in results) {
         String? name = r.advertisementData.localName;
-        // On filtre par notre Service UUID
-        if (r.advertisementData.serviceUuids.contains(Guid(SERVICE_UUID)) || 
-            (name != null && name.isNotEmpty)) {
-          
-          final deviceId = r.device.remoteId.str;
-          if (!discoveredDevices.any((d) => d.deviceId == deviceId)) {
-            discoveredDevices.add(Device(
-              deviceId: deviceId,
-              deviceName: name ?? "Inconnu",
-              bluetoothDevice: r.device,
-            ));
-            notifyListeners();
-          }
+        if (name != null && name.startsWith(APP_PREFIX)) {
+          _processBroadcastName(name, r.device.remoteId.str);
         }
       }
     });
 
-    FlutterBluePlus.startScan(
-      withServices: [Guid(SERVICE_UUID)],
-      timeout: const Duration(seconds: 15),
-    );
-    notifyListeners();
+    FlutterBluePlus.startScan(allowDuplicates: true);
   }
 
-  void stopJoining() {
-    FlutterBluePlus.stopScan();
-    _scanSubscription?.cancel();
-    isBrowsing = false;
-    notifyListeners();
-  }
+  void _processBroadcastName(String name, String deviceId) {
+    // Format: TB_TYPE_NOM_PAYLOAD
+    final parts = name.split('_');
+    if (parts.length < 4) return;
 
-  Future<void> connectToDevice(Device device) async {
-    if (device.bluetoothDevice == null) return;
+    final type = parts[1];
+    final deviceName = parts[2];
+    final payload = parts[3];
 
-    device.state = SessionState.connecting;
-    notifyListeners();
-
-    try {
-      debugPrint("Connexion à ${device.deviceName} (${device.deviceId})...");
-      await device.bluetoothDevice!.connect();
-      debugPrint("Connexion établie avec succès !");
+    // Mise à jour de la liste des joueurs
+    final existingIdx = connectedDevices.indexWhere((d) => d.deviceId == deviceId);
+    if (existingIdx != -1) {
+      // Si le payload a changé, on déclenche un événement
+      if (connectedDevices[existingIdx].lastMessage != payload) {
+        debugPrint("Nouveau message de $deviceName: $payload");
+        _handleIncomingPayload(payload);
+      }
       
-      debugPrint("Découverte des services en cours...");
-      List<BluetoothService> services = await device.bluetoothDevice!.discoverServices();
-      debugPrint("Nombre de services trouvés: ${services.length}");
+      connectedDevices[existingIdx] = Device(
+        deviceId: deviceId,
+        deviceName: deviceName,
+        lastMessage: payload,
+        lastSeen: DateTime.now(),
+      );
+    } else {
+      // Nouveau joueur détecté
+      debugPrint("Joueur détecté: $deviceName (Type: $type)");
+      connectedDevices.add(Device(
+        deviceId: deviceId,
+        deviceName: deviceName,
+        lastMessage: payload,
+        lastSeen: DateTime.now(),
+      ));
+    }
 
-      bool serviceFound = false;
-      for (var service in services) {
-        debugPrint("Service trouvé: ${service.uuid.toString()}");
-        if (service.uuid.toString().toLowerCase() == SERVICE_UUID.toLowerCase()) {
-          debugPrint(">>> NOTRE SERVICE DE JEU A ÉTÉ TROUVÉ !");
-          serviceFound = true;
-          for (var char in service.characteristics) {
-            debugPrint("Caractéristique du service: ${char.uuid.toString()}");
-            if (char.uuid.toString().toLowerCase() == CHARACTERISTIC_UUID.toLowerCase()) {
-              debugPrint(">>> NOTRE CARACTÉRISTIQUE DE JEU A ÉTÉ TROUVÉE !");
-              
-              await char.setNotifyValue(true);
-              _notificationSubscriptions[device.deviceId] = char.onValueReceived.listen((value) {
-                final message = utf8.decode(value);
-                debugPrint("Message reçu de l'hôte: $message");
-                _messageController.add(message);
-              });
+    // Nettoyage des joueurs déconnectés (pas vus depuis 10s)
+    connectedDevices.removeWhere((d) => 
+      DateTime.now().difference(d.lastSeen).inSeconds > 10);
 
-              final joinMessage = jsonEncode({
-                'type': 'join',
-                'deviceName': _myDeviceName,
-              });
-              await char.write(utf8.encode(joinMessage));
-              debugPrint("Message 'join' envoyé avec succès.");
-            }
-          }
-        }
-      }
+    notifyListeners();
+  }
 
-      if (!serviceFound) {
-        debugPrint("AVERTISSEMENT : Notre SERVICE_UUID n'a pas été trouvé parmi les services du périphérique.");
-      }
-
-      device.state = SessionState.connected;
-      if (!connectedDevices.any((d) => d.deviceId == device.deviceId)) {
-        connectedDevices.add(device);
-      }
-      notifyListeners();
-    } catch (e) {
-      debugPrint("Erreur connexion: $e");
-      device.state = SessionState.notConnected;
-      notifyListeners();
+  void _handleIncomingPayload(String payload) {
+    // On convertit les payloads simples en messages JSON pour rester compatible avec le reste de l'app
+    if (payload == "START") {
+      _messageController.add(jsonEncode({'type': 'game_start'}));
+    } else if (payload.startsWith("CUT")) {
+      _messageController.add(jsonEncode({'type': 'cut_wire', 'wireIndex': payload.substring(3)}));
     }
   }
 
-  // Cette méthode sera appelée quand l'hôte reçoit un message
-  void _handleIncomingMessage(String rawMessage, String remoteDeviceId) {
-    try {
-      final data = jsonDecode(rawMessage);
-      debugPrint("Traitement message entrant: ${data['type']} de $remoteDeviceId");
-
-      if (data['type'] == 'join') {
-        // Un client vient de nous dire qu'il est connecté
-        final deviceName = data['deviceName'] ?? "Inconnu";
-        if (!connectedDevices.any((d) => d.deviceId == remoteDeviceId)) {
-          debugPrint("Nouveau joueur détecté: $deviceName");
-          connectedDevices.add(Device(
-            deviceId: remoteDeviceId,
-            deviceName: deviceName,
-            state: SessionState.connected,
-          ));
-          notifyListeners();
-        }
-      } else {
-        // Autres types de messages (actions de jeu)
-        _messageController.add(rawMessage);
-      }
-    } catch (e) {
-      debugPrint("Erreur handleIncomingMessage: $e");
-    }
-  }
-
-  Future<void> sendMessage(String deviceId, Map<String, dynamic> data) async {
-    final device = connectedDevices.firstWhere((d) => d.deviceId == deviceId);
-    if (device.bluetoothDevice == null) return;
-
-    final message = jsonEncode(data);
-    final bytes = utf8.encode(message);
-
-    List<BluetoothService> services = await device.bluetoothDevice!.discoverServices();
-    for (var service in services) {
-      if (service.uuid.toString() == SERVICE_UUID) {
-        for (var char in service.characteristics) {
-          if (char.uuid.toString() == CHARACTERISTIC_UUID) {
-            await char.write(bytes);
-          }
-        }
-      }
-    }
-  }
+  // --- ACTIONS ---
 
   void broadcastMessage(Map<String, dynamic> data) {
-    for (var device in connectedDevices) {
-      sendMessage(device.deviceId, data);
+    if (data['type'] == 'game_start') {
+      _currentPayload = "START";
+    } else if (data['type'] == 'cut_wire') {
+      _currentPayload = "CUT${data['wireIndex']}";
     }
-    // Si nous sommes l'hôte, nous devrions aussi pouvoir envoyer aux clients connectés
-    // via les notifications sur notre propre GATT Server (implémentation avancée requise)
+    _updateAdvertising();
   }
 
-  void disconnectAll() {
-    stopHosting();
-    stopJoining();
-    for (var device in connectedDevices) {
-      device.bluetoothDevice?.disconnect();
-    }
-    for (var sub in _notificationSubscriptions.values) {
-      sub.cancel();
-    }
-    _notificationSubscriptions.clear();
+  void stopAll() {
+    _peripheral.stop();
+    FlutterBluePlus.stopScan();
+    _scanSubscription?.cancel();
+    isAdvertising = false;
+    isScanning = false;
     connectedDevices.clear();
-    discoveredDevices.clear();
     notifyListeners();
   }
+
+  void disconnectAll() => stopAll();
 }
