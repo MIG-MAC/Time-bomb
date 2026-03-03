@@ -173,20 +173,31 @@ class GameNearbyService with ChangeNotifier {
     notifyListeners();
 
     try {
+      debugPrint("Connexion à ${device.deviceName}...");
       await device.bluetoothDevice!.connect();
       
-      // Découverte des services
+      debugPrint("Découverte des services...");
       List<BluetoothService> services = await device.bluetoothDevice!.discoverServices();
       for (var service in services) {
         if (service.uuid.toString() == SERVICE_UUID) {
           for (var char in service.characteristics) {
             if (char.uuid.toString() == CHARACTERISTIC_UUID) {
-              // S'abonner aux notifications pour recevoir les messages de l'hôte
+              debugPrint("Caractéristique trouvée, abonnement...");
               await char.setNotifyValue(true);
               _notificationSubscriptions[device.deviceId] = char.onValueReceived.listen((value) {
                 final message = utf8.decode(value);
+                debugPrint("Message reçu de l'hôte: $message");
                 _messageController.add(message);
               });
+
+              // --- ÉTAPE CRUCIALE : Envoyer notre nom à l'hôte pour qu'il nous voie ---
+              final joinMessage = jsonEncode({
+                'type': 'join',
+                'deviceId': 'me', // L'ID sera géré par l'hôte à la réception
+                'deviceName': _myDeviceName,
+              });
+              await char.write(utf8.encode(joinMessage));
+              debugPrint("Message 'join' envoyé à l'hôte");
             }
           }
         }
@@ -204,7 +215,32 @@ class GameNearbyService with ChangeNotifier {
     }
   }
 
-  // --- MESSAGERIE ---
+  // Cette méthode sera appelée quand l'hôte reçoit un message
+  void _handleIncomingMessage(String rawMessage, String remoteDeviceId) {
+    try {
+      final data = jsonDecode(rawMessage);
+      debugPrint("Traitement message entrant: ${data['type']} de $remoteDeviceId");
+
+      if (data['type'] == 'join') {
+        // Un client vient de nous dire qu'il est connecté
+        final deviceName = data['deviceName'] ?? "Inconnu";
+        if (!connectedDevices.any((d) => d.deviceId == remoteDeviceId)) {
+          debugPrint("Nouveau joueur détecté: $deviceName");
+          connectedDevices.add(Device(
+            deviceId: remoteDeviceId,
+            deviceName: deviceName,
+            state: SessionState.connected,
+          ));
+          notifyListeners();
+        }
+      } else {
+        // Autres types de messages (actions de jeu)
+        _messageController.add(rawMessage);
+      }
+    } catch (e) {
+      debugPrint("Erreur handleIncomingMessage: $e");
+    }
+  }
 
   Future<void> sendMessage(String deviceId, Map<String, dynamic> data) async {
     final device = connectedDevices.firstWhere((d) => d.deviceId == deviceId);
