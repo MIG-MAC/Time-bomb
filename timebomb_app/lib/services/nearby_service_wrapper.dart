@@ -60,11 +60,22 @@ class GameNearbyService with ChangeNotifier {
       debugPrint("Permissions Android: $statuses");
       return statuses.values.every((status) => status.isGranted);
     } else {
-      Map<Permission, PermissionStatus> statuses = await [
-        Permission.bluetooth,
-      ].request();
-      debugPrint("Permissions iOS: $statuses");
-      return statuses.values.every((status) => status.isGranted);
+      // Sur iOS, nous vérifions spécifiquement le Bluetooth
+      PermissionStatus status = await Permission.bluetooth.status;
+      debugPrint("État actuel de la permission Bluetooth iOS: $status");
+      
+      if (status.isDenied || status.isRestricted) {
+        debugPrint("Demande de permission Bluetooth en cours...");
+        status = await Permission.bluetooth.request();
+        debugPrint("Résultat de la demande de permission Bluetooth: $status");
+      }
+      
+      if (status.isPermanentlyDenied) {
+        debugPrint("Permission Bluetooth DEFINITIVEMENT REFUSÉE. Redirection vers les paramètres ?");
+        // Optionnel: openAppSettings();
+      }
+
+      return status.isGranted;
     }
   }
 
