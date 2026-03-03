@@ -173,16 +173,25 @@ class GameNearbyService with ChangeNotifier {
     notifyListeners();
 
     try {
-      debugPrint("Connexion à ${device.deviceName}...");
+      debugPrint("Connexion à ${device.deviceName} (${device.deviceId})...");
       await device.bluetoothDevice!.connect();
+      debugPrint("Connexion établie avec succès !");
       
-      debugPrint("Découverte des services...");
+      debugPrint("Découverte des services en cours...");
       List<BluetoothService> services = await device.bluetoothDevice!.discoverServices();
+      debugPrint("Nombre de services trouvés: ${services.length}");
+
+      bool serviceFound = false;
       for (var service in services) {
-        if (service.uuid.toString() == SERVICE_UUID) {
+        debugPrint("Service trouvé: ${service.uuid.toString()}");
+        if (service.uuid.toString().toLowerCase() == SERVICE_UUID.toLowerCase()) {
+          debugPrint(">>> NOTRE SERVICE DE JEU A ÉTÉ TROUVÉ !");
+          serviceFound = true;
           for (var char in service.characteristics) {
-            if (char.uuid.toString() == CHARACTERISTIC_UUID) {
-              debugPrint("Caractéristique trouvée, abonnement...");
+            debugPrint("Caractéristique du service: ${char.uuid.toString()}");
+            if (char.uuid.toString().toLowerCase() == CHARACTERISTIC_UUID.toLowerCase()) {
+              debugPrint(">>> NOTRE CARACTÉRISTIQUE DE JEU A ÉTÉ TROUVÉE !");
+              
               await char.setNotifyValue(true);
               _notificationSubscriptions[device.deviceId] = char.onValueReceived.listen((value) {
                 final message = utf8.decode(value);
@@ -190,17 +199,19 @@ class GameNearbyService with ChangeNotifier {
                 _messageController.add(message);
               });
 
-              // --- ÉTAPE CRUCIALE : Envoyer notre nom à l'hôte pour qu'il nous voie ---
               final joinMessage = jsonEncode({
                 'type': 'join',
-                'deviceId': 'me', // L'ID sera géré par l'hôte à la réception
                 'deviceName': _myDeviceName,
               });
               await char.write(utf8.encode(joinMessage));
-              debugPrint("Message 'join' envoyé à l'hôte");
+              debugPrint("Message 'join' envoyé avec succès.");
             }
           }
         }
+      }
+
+      if (!serviceFound) {
+        debugPrint("AVERTISSEMENT : Notre SERVICE_UUID n'a pas été trouvé parmi les services du périphérique.");
       }
 
       device.state = SessionState.connected;
