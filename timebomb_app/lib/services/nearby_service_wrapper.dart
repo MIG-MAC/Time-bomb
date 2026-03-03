@@ -49,6 +49,7 @@ class GameNearbyService with ChangeNotifier {
   GameNearbyService();
 
   Future<bool> requestPermissions() async {
+    debugPrint("Demande de permissions...");
     if (Platform.isAndroid) {
       Map<Permission, PermissionStatus> statuses = await [
         Permission.bluetoothScan,
@@ -56,56 +57,69 @@ class GameNearbyService with ChangeNotifier {
         Permission.bluetoothConnect,
         Permission.location,
       ].request();
+      debugPrint("Permissions Android: $statuses");
       return statuses.values.every((status) => status.isGranted);
     } else {
       Map<Permission, PermissionStatus> statuses = await [
         Permission.bluetooth,
       ].request();
+      debugPrint("Permissions iOS: $statuses");
       return statuses.values.every((status) => status.isGranted);
     }
   }
 
   Future<void> init(String deviceName) async {
+    debugPrint("Initialisation du service pour: $deviceName");
     _myDeviceName = deviceName;
-    // On s'assure que le Bluetooth est activé
-    if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
-      // Sur Android on peut demander l'activation, sur iOS c'est à l'utilisateur
-      if (Platform.isAndroid) {
-        await FlutterBluePlus.turnOn();
+    
+    debugPrint("Vérification de l'état de l'adaptateur Bluetooth...");
+    try {
+      // On ajoute un timeout pour éviter de rester bloqué si l'état ne change pas
+      var state = await FlutterBluePlus.adapterState.first.timeout(const Duration(seconds: 2));
+      debugPrint("État Bluetooth: $state");
+
+      if (state != BluetoothAdapterState.on) {
+        debugPrint("Le Bluetooth n'est pas activé ! État actuel: $state");
+        if (Platform.isAndroid) {
+          debugPrint("Tentative d'activation du Bluetooth (Android)...");
+          await FlutterBluePlus.turnOn();
+        }
       }
+    } catch (e) {
+      debugPrint("Timeout ou erreur lors de la récupération de l'état Bluetooth: $e");
+      // On continue quand même, car l'état pourrait s'activer plus tard
     }
   }
 
   // --- LOGIQUE HÔTE (PERIPHERAL) ---
 
   Future<void> startHosting() async {
-    if (isAdvertising) return;
-
-    final advertiseData = AdvertiseData(
-      serviceUuid: SERVICE_UUID,
-      localName: _myDeviceName,
-    );
-
-    final advertiseSetParameters = AdvertiseSetParameters();
-
-    await _peripheral.start(
-      advertiseData: advertiseData,
-      advertiseSetParameters: advertiseSetParameters,
-    );
-
-    // Note: Pour un échange de données complet en tant qu'hôte (GATT Server),
-    // flutter_blue_plus supporte maintenant l'ajout de services.
-    
-    try {
-      // Configuration du GATT Server pour recevoir des messages
-      // (Simplifié ici pour la structure, en BLE pur l'hôte attend que les clients écrivent)
-      // flutter_blue_plus v1.34+ supporte les services GATT
-    } catch (e) {
-      debugPrint("Erreur init GATT Server: $e");
+    debugPrint("Tentative de lancement de l'hébergement...");
+    if (isAdvertising) {
+      debugPrint("Déjà en train d'héberger.");
+      return;
     }
 
-    isAdvertising = true;
-    notifyListeners();
+    try {
+      final advertiseData = AdvertiseData(
+        serviceUuid: SERVICE_UUID,
+        localName: _myDeviceName,
+      );
+
+      final advertiseSetParameters = AdvertiseSetParameters();
+
+      debugPrint("Démarrage du périphérique BLE peripheral...");
+      await _peripheral.start(
+        advertiseData: advertiseData,
+        advertiseSetParameters: advertiseSetParameters,
+      );
+      debugPrint("Périphérique BLE démarré avec succès.");
+
+      isAdvertising = true;
+      notifyListeners();
+    } catch (e) {
+      debugPrint("ERREUR lors du lancement de l'hébergement: $e");
+    }
   }
 
   void stopHosting() {

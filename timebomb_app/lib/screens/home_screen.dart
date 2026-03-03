@@ -88,16 +88,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   'CRÉER UNE PARTIE',
                   Colors.amber[700]!,
                   () async {
-                    if (await nearbyService.requestPermissions()) {
-                      await nearbyService.init(_nameController.text);
-                      nearbyService.startHosting();
-                      if (!context.mounted) return;
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const LobbyScreen(isHost: true),
-                        ),
-                      );
+                    debugPrint("Bouton CRÉER UNE PARTIE cliqué");
+                    try {
+                      if (await nearbyService.requestPermissions()) {
+                        debugPrint("Permissions accordées");
+                        await nearbyService.init(_nameController.text);
+                        debugPrint("Initialisation terminée, lancement de l'hébergement...");
+                        await nearbyService.startHosting();
+                        debugPrint("Hébergement lancé, navigation vers LobbyScreen");
+                        if (!context.mounted) return;
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const LobbyScreen(isHost: true),
+                          ),
+                        );
+                      } else {
+                        debugPrint("Permissions refusées");
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Permissions Bluetooth nécessaires")),
+                          );
+                        }
+                      }
+                    } catch (e) {
+                      debugPrint("Erreur lors de la création de la partie: $e");
                     }
                   },
                 ),
