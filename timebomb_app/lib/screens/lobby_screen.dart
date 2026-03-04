@@ -17,20 +17,82 @@ class LobbyScreen extends StatefulWidget {
 
 class _LobbyScreenState extends State<LobbyScreen> {
   late StreamSubscription _subscription;
+  bool _didShowRustStartPopup = false;
+  bool _didShowClientStartPopup = false;
 
   @override
   void initState() {
     super.initState();
     final service = Provider.of<GameNearbyService>(context, listen: false);
-    _subscription = service.messages.listen((msg) {
+    _subscription = service.messages.listen((msg) async {
+      if (!mounted) {
+        return;
+      }
+
       final data = jsonDecode(msg);
-      if (data['type'] == 'game_start') {
-        if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const GameScreen()),
-          );
+
+      if (!widget.isHost &&
+          data['type'] == 'rust_start_received' &&
+          !_didShowRustStartPopup) {
+        _didShowRustStartPopup = true;
+        final rustData = data['data'];
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text('Event Rust reçu'),
+              content: Text('START reçu via callback Rust\n\n$rustData'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('OK'),
+                ),
+              ],
+            );
+          },
+        );
+
+        if (!mounted) {
+          return;
         }
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const GameScreen()),
+        );
+        return;
+      }
+
+      if (data['type'] == 'game_start') {
+        if (!widget.isHost && !_didShowClientStartPopup) {
+          _didShowClientStartPopup = true;
+          await showDialog<void>(
+            context: context,
+            builder: (dialogContext) {
+              return AlertDialog(
+                title: const Text('Start reçu'),
+                content: const Text(
+                  'Le client a reçu le START.\nLa partie va démarrer.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('OK'),
+                  ),
+                ],
+              );
+            },
+          );
+
+          if (!mounted) {
+            return;
+          }
+        }
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const GameScreen()),
+        );
       }
     });
   }
@@ -73,13 +135,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
               Text(
                 'Attendez que les autres joueurs vous rejoignent...',
                 textAlign: TextAlign.center,
-                style: GoogleFonts.specialElite(color: Colors.white, fontSize: 16),
+                style: GoogleFonts.specialElite(
+                  color: Colors.white,
+                  fontSize: 16,
+                ),
               )
             else
               Text(
                 'Sélectionnez une partie pour rejoindre...',
                 textAlign: TextAlign.center,
-                style: GoogleFonts.specialElite(color: Colors.white, fontSize: 16),
+                style: GoogleFonts.specialElite(
+                  color: Colors.white,
+                  fontSize: 16,
+                ),
               ),
             const SizedBox(height: 30),
             Expanded(
@@ -92,10 +160,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     decoration: BoxDecoration(
                       color: Colors.grey[900],
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: Colors.green,
-                        width: 2,
-                      ),
+                      border: Border.all(color: Colors.green, width: 2),
                     ),
                     child: ListTile(
                       title: Text(
@@ -118,22 +183,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   width: double.infinity,
                   height: 50,
                   child: ElevatedButton(
-                    onPressed: nearbyService.connectedDevices.length >= 1 // Min 2 total for testing
-                        ? () {
-                            nearbyService.broadcastMessage({'type': 'game_start'});
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => const GameScreen()),
-                            );
-                          }
-                        : null,
+                    onPressed:
+                        nearbyService.connectedDevices.length >=
+                                1 // Min 2 total for testing
+                            ? () async {
+                              await nearbyService.broadcastMessage({
+                                'type': 'game_start',
+                              });
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const GameScreen(),
+                                ),
+                              );
+                            }
+                            : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red[900],
                       disabledBackgroundColor: Colors.grey[800],
                     ),
                     child: Text(
                       'LANCER LA BOMBE (${nearbyService.connectedDevices.length + 1} Joueurs)',
-                      style: GoogleFonts.specialElite(fontSize: 18, color: Colors.white),
+                      style: GoogleFonts.specialElite(
+                        fontSize: 18,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),

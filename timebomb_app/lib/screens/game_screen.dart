@@ -14,7 +14,7 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> {
   late StreamSubscription _subscription;
-  String _gameStatus = "En attente de distribution des rôles...";
+  String _gameStatus = "La partie commence !";
 
   @override
   void initState() {
@@ -52,7 +52,10 @@ class _GameScreenState extends State<GameScreen> {
             const SizedBox(height: 20),
             Text(
               _gameStatus,
-              style: GoogleFonts.specialElite(fontSize: 20, color: Colors.white),
+              style: GoogleFonts.specialElite(
+                fontSize: 20,
+                color: Colors.white,
+              ),
               textAlign: TextAlign.center,
             ),
           ],

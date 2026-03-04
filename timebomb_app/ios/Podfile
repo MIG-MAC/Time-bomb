@@ -1,0 +1,70 @@
+# Uncomment this line to define a global platform for your project
+# platform :ios, '13.0'
+
+# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+flutter_ios_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+  end
+
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.native_targets.each do |native_target|
+      next unless native_target.name == 'Runner'
+
+      native_target.build_configurations.each do |config|
+        flags = config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']
+        flags = [flags] unless flags.is_a?(Array)
+
+        sim_flags = config.build_settings['OTHER_LDFLAGS[sdk=iphonesimulator*]'] || ['$(inherited)']
+        sim_flags = [sim_flags] unless sim_flags.is_a?(Array)
+
+        device_flags = config.build_settings['OTHER_LDFLAGS[sdk=iphoneos*]'] || ['$(inherited)']
+        device_flags = [device_flags] unless device_flags.is_a?(Array)
+
+        simulator_force_load = '-Wl,-force_load,${SRCROOT}/../libtime_bomb/libtime_bomb_core_ios_sim_universal.a'
+        device_force_load = '-Wl,-force_load,${SRCROOT}/../libtime_bomb/libtime_bomb_core_ios_arm64.a'
+
+        sim_flags << simulator_force_load unless sim_flags.include?(simulator_force_load)
+        device_flags << device_force_load unless device_flags.include?(device_force_load)
+
+        config.build_settings['OTHER_LDFLAGS'] = flags
+        config.build_settings['OTHER_LDFLAGS[sdk=iphonesimulator*]'] = sim_flags
+        config.build_settings['OTHER_LDFLAGS[sdk=iphoneos*]'] = device_flags
+      end
+    end
+  end
+end
